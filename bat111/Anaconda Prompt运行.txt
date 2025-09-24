@@ -1,0 +1,40 @@
+1、基本信息     %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python full_stock_basic.py
+
+2、财务数据     %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python full_finance.py --refresh-months 12
+
+
+3、行业信息     %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python full_ths_index.py
+
+
+4、龙虎榜        %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_dragon.py
+
+
+
+5 、 涨跌停        %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_stk_limit.py  --index 000905.SH
+
+
+6、  九转信号     %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_stk_nineturn.py --init-start 20180101 --index 000905.SH --qpm 480
+
+
+7、  板块指数          %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_ths_daily.py
+
+
+9、复权因子       %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_adj_factor.py  --index 000905.SH
+
+
+10、每日指标     %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_daily_basic.py  --index 000905.SH
+
+
+11、指数日线      %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_index_daily.py --code 000905.SH,000300.SH
+
+
+12、 资金信息    %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_moneyflow.py  --index 000905.SH
+
+
+13、 日线信息   %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_stock_daily.py  --index 000905.SH
+
+
+14、停复牌      %WINDIR%\System32\cmd.exe "/K" d:\anaconda3\Scripts\activate.bat quant && cd /d D:\2whm\src && python inc_suspend.py
+
+
+

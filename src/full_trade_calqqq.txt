@@ -1,0 +1,143 @@
+# -*- coding: utf-8 -*-
+"""全量下载：交易日历 trade_cal（支持多交易所，先删区间再重下）
+- 接口：pro.trade_cal（https://tushare.pro/document/2?doc_id=26）
+- 表：trade_cal（主键：exchange_t + cal_date_t）
+- 说明：默认抓取 全市场('')、SSE、SZSE、BSE；也可用 --exchanges 指定，如 "SSE,SZSE"
+"""
+import argparse, time
+from typing import List
+import numpy as np
+import pandas as pd
+from sqlalchemy import text
+from utils import get_engine, get_pro, log, delete_range, today_str
+
+TABLE    = "trade_cal"
+DATE_COL = "cal_date_t"
+
+FIELDS = "exchange,cal_date,is_open,pretrade_date"
+
+EXCHANGE_NAME_MAP = {
+    "":    "全市场"
+}
+
+def _to_date(ymd: str) -> str:
+    s = str(ymd)[:8]
+    return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+
+def _parse_exchanges(s: str) -> List[str]:
+    s = (s or "").strip().upper()
+    if not s or s == "ALL":
+        return ["", "SSE", "SZSE", "BSE"]
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    return parts or ["", "SSE", "SZSE", "BSE"]
+
+def _fetch_one_exchange(pro, exch: str, start: str, end: str) -> pd.DataFrame:
+    df = pro.trade_cal(exchange=exch, start_date=start, end_date=end, fields=FIELDS)
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["exchange","cal_date","is_open","pretrade_date"])
+    df = df.copy()
+
+    # 统一映射为 *_t
+    df["exchange"] = exch
+    df["cal_date"] = df["cal_date"].astype(str).str.slice(0,8).apply(_to_date)
+    if "pretrade_date" in df.columns:
+        df["pretrade_date"] = df["pretrade_date"].apply(
+            lambda x: _to_date(x) if pd.notnull(x) and str(x) not in ("None","") else None
+        )
+    else:
+        df["pretrade_date"] = None
+    # is_open 统一为 0/1
+    df["is_open"] = pd.to_numeric(df["is_open"], errors="coerce").fillna(0).astype(int)
+
+    df.rename(columns={
+        "exchange":"exchange_t",
+        "cal_date":"cal_date_t",
+        "is_open":"is_open_t",
+        "pretrade_date":"pretrade_date_t",
+    }, inplace=True)
+
+    # 中文交易所名（去掉 fillna(None)，让 _upsert 统一处理 None）
+    df["exchange_name_t"] = df["exchange_t"].map(EXCHANGE_NAME_MAP)
+
+    # 列齐
+    cols = ["exchange_t","exchange_name_t","cal_date_t","is_open_t","pretrade_date_t"]
+    for c in cols:
+        if c not in df.columns: df[c] = None
+    df = df[cols].copy()
+    return df
+
+def _delete_range(engine, exchanges: List[str], start: str, end: str):
+    """若指定了具体交易所，则按 exchange 精确删除；否则全表范围删除"""
+    s, e = _to_date(start), _to_date(end)
+    if not exchanges or set(exchanges) == set(["", "SSE", "SZSE", "BSE"]):
+        log.info(f"[full] table={TABLE} delete_range all exchanges {start}~{end}")
+        delete_range(engine, TABLE, DATE_COL, s, e)
+        return
+    log.info(f"[full] table={TABLE} delete_range exchanges={exchanges} {start}~{end}")
+    in_list = ",".join([":e"+str(i) for i in range(len(exchanges))])
+    sql = (
+        f"DELETE FROM `{TABLE}` "
+        f"WHERE `{DATE_COL}`>=:s AND `{DATE_COL}`<=:e "
+        f"AND `exchange_t` IN ({in_list})"
+    )
+    params = {"s": s, "e": e}
+    for i, ex in enumerate(exchanges):
+        params["e"+str(i)] = ex
+    with engine.begin() as conn:
+        res = conn.execute(text(sql), params)
+        log.info(f"[delete] table={TABLE} rows={getattr(res, 'rowcount', -1)}")
+
+def _upsert(engine, df: pd.DataFrame) -> int:
+    if df is None or df.empty:
+        return 0
+    cols = ["exchange_t","exchange_name_t","cal_date_t","is_open_t","pretrade_date_t"]
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
+    df = df[cols].copy()
+
+    # 关键：彻底去掉 NaN/NA，避免 PyMySQL 报 nan 错
+    df = df.astype(object)
+    df.replace({pd.NA: None, np.nan: None}, inplace=True)
+
+    colq = ",".join(f"`{c}`" for c in cols)
+    ph   = ",".join(f":{c}" for c in cols)
+    update_cols  = [c for c in cols if c not in ("exchange_t","cal_date_t")]
+    update_clause= ",".join(f"`{c}`=VALUES(`{c}`)" for c in update_cols)
+    sql = (
+        f"INSERT INTO `{TABLE}` ({colq}) VALUES ({ph}) "
+        f"ON DUPLICATE KEY UPDATE {update_clause}"
+    )
+
+    total = 0
+    with engine.begin() as conn:
+        for i in range(0, len(df), 2000):
+            chunk = df.iloc[i:i+2000].copy()
+            chunk = chunk.astype(object)
+            chunk.replace({pd.NA: None, np.nan: None}, inplace=True)
+            conn.execute(text(sql), chunk.to_dict(orient="records"))
+            total += chunk.shape[0]
+    return total
+
+def main(start: str, end: str, exchanges: str):
+    pro = get_pro()
+    eng = get_engine()
+    exch_list = _parse_exchanges(exchanges)
+    _delete_range(eng, exch_list, start, end)
+
+    total = 0
+    for idx, ex in enumerate(exch_list, 1):
+        df = _fetch_one_exchange(pro, ex, start, end)
+        n  = _upsert(eng, df)
+        total += n
+        log.info(f"[full] {idx}/{len(exch_list)} exchange={repr(ex)} rows={n} total={total}")
+        time.sleep(0.15)
+    log.info(f"[full] done table={TABLE} rows={total} range={start}~{end} exchanges={exch_list}")
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--start",     default="19900101", help="YYYYMMDD; default=19900101")
+    ap.add_argument("--end",       default=today_str(), help="YYYYMMDD; default=today")
+    ap.add_argument("--exchanges", default="ALL", help='ALL 或 逗号分隔（如 "SSE,SZSE"；全市场用空串: ""）')
+    args = ap.parse_args()
+    main(args.start.strip(), args.end.strip(), args.exchanges.strip())
